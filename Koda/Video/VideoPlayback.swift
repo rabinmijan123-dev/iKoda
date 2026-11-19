@@ -381,7 +381,9 @@ final class VideoPlayback {
     /// Subtitles on (the listener's language if offered, else the first) or off (`C`).
     func toggleCaptions() {
         if caption != nil { return setCaption(nil) }
-        let language = Locale.current.language.languageCode?.identifier
+        // The device's first language, not `Locale.current`, which follows Koda's own
+        // (English only) and so would pick English captions on an iPhone set to Chinese.
+        let language = Locale.Language(identifier: Locale.preferredLanguages.first ?? Locale.current.identifier).languageCode?.identifier
         let preferred = captions.first { $0.locale?.language.languageCode?.identifier == language } ?? captions.first
         setCaption(preferred)
     }

@@ -39,10 +39,17 @@ struct SyncedLyrics: View {
     private var offset: TimeInterval { player.current.map { library.lyricsOffset(for: $0.id) } ?? 0 }
     private var hasDuet: Bool { lines.contains { $0.voice != .lead } }
 
+    /// The listener's language: the first the device prefers. Not `Locale.current`, which
+    /// follows the languages the app is written in: Koda's are English only, so on an
+    /// iPhone set to Chinese it reads English, and English lyrics found nothing to translate.
+    private static var listenerLanguage: Locale.Language {
+        Locale.Language(identifier: Locale.preferredLanguages.first ?? Locale.current.identifier)
+    }
+
     /// Lyrics in a language other than the listener's can be translated.
     private var canTranslate: Bool {
         guard let language, let code = Locale.Language(identifier: language).languageCode else { return false }
-        return code != Locale.current.language.languageCode
+        return code != Self.listenerLanguage.languageCode
     }
 
     /// The line under a line, as chosen and available.
@@ -241,7 +248,7 @@ extension SyncedLyrics {
             return
         }
         if translating == nil, translations.isEmpty {
-            translating = TranslationSession.Configuration(source: Locale.Language(identifier: language), target: nil)
+            translating = TranslationSession.Configuration(source: Locale.Language(identifier: language), target: Self.listenerLanguage)
         }
     }
 }
