@@ -9,6 +9,19 @@ import Testing
         #expect(ChineseScript.traditional("稻香 - 周杰伦 (官方版)") == "稻香 - 周杰倫 (官方版)")
     }
 
+    /// Characters both scripts share stay as they are: 杰 is not rewritten as 傑.
+    @Test func keepsSharedCharacters() {
+        #expect(ChineseScript.traditional("台湾的歌") == "台灣的歌")
+        #expect(ChineseScript.traditional("和你见面") == "和你見面")
+    }
+
+    /// Text already in Traditional characters is left exactly as it is.
+    @Test func leavesTraditionalAlone() {
+        #expect(ChineseScript.traditional("周杰倫") == "周杰倫")
+        #expect(ChineseScript.traditional("我在台北等你") == "我在台北等你")
+        #expect(ChineseScript.traditional("以後的以後") == "以後的以後")
+    }
+
     @Test func traditionalReadsAsSimplified() {
         #expect(ChineseScript.simplified("周杰倫") == "周杰伦")
     }
@@ -16,7 +29,6 @@ import Testing
     @Test func leavesEverythingButHanAlone() {
         #expect(ChineseScript.traditional("Blinding Lights") == "Blinding Lights")
         #expect(ChineseScript.traditional("dQw4w9WgXcQ") == "dQw4w9WgXcQ")
-        #expect(ChineseScript.traditional("周杰倫") == "周杰倫")
         #expect(ChineseScript.traditional("사랑해") == "사랑해")
     }
 
