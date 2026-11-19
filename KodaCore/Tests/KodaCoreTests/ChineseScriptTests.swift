@@ -9,10 +9,33 @@ import Testing
         #expect(ChineseScript.traditional("稻香 - 周杰伦 (官方版)") == "稻香 - 周杰倫 (官方版)")
     }
 
-    /// Characters both scripts share stay as they are: 杰 is not rewritten as 傑.
-    @Test func keepsSharedCharacters() {
+    /// Taiwan's way: 台 in everyday words, and 杰 as a character of its own.
+    @Test func writesTheTaiwaneseWay() {
         #expect(ChineseScript.traditional("台湾的歌") == "台灣的歌")
+        #expect(ChineseScript.traditional("电视台") == "電視台")
+        #expect(ChineseScript.traditional("杰的爱") == "杰的愛")
+        #expect(ChineseScript.traditional("杰出的歌手们") == "傑出的歌手們")
+    }
+
+    /// Whole words before single characters: 发 is 髮 in hair and 發 elsewhere, and 后 is
+    /// 後 except in 皇后.
+    @Test func readsWholeWords() {
+        #expect(ChineseScript.traditional("头发") == "頭髮")
+        #expect(ChineseScript.traditional("发现") == "發現")
+        #expect(ChineseScript.traditional("我以后再也不会") == "我以後再也不會")
+        #expect(ChineseScript.traditional("皇后的爱") == "皇后的愛")
         #expect(ChineseScript.traditional("和你见面") == "和你見面")
+    }
+
+    /// Lyrics with words timed one by one are read as whole words across them.
+    @Test func readsWholeWordsAcrossTimedWords() {
+        let lyrics = Lyrics.synced(Lyrics.parseLRC("[00:10.00]<00:10.00>头<00:10.50>发"))
+        guard case .synced(let lines) = ChineseScript.traditional(lyrics) else {
+            Issue.record("expected synced lyrics")
+            return
+        }
+        #expect(lines[0].text == "頭髮")
+        #expect(lines[0].words.map(\.text) == ["頭", "髮"])
     }
 
     /// Text already in Traditional characters is left exactly as it is.

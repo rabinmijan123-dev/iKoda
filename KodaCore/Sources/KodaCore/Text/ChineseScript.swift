@@ -1,18 +1,18 @@
 import Foundation
 
-/// Chinese shown in Traditional characters: song titles, artists, albums and lyrics arrive
-/// in whichever script the uploader or the lyrics service used, very often Simplified.
+/// Chinese shown in Traditional characters, the way Taiwan writes it: song titles, artists,
+/// albums and lyrics arrive in whichever script the uploader or the lyrics service used,
+/// very often Simplified.
 ///
-/// The conversion is Apple's own ICU transform, on the device. It goes character by
-/// character, so it does not swap in Taiwanese wording, and a Simplified character with
-/// more than one Traditional form gets the common one.
+/// The conversion is OpenCC's, on the device (see `OpenCCData`): whole words before single
+/// characters, so 头发 becomes 頭髮 and 以后 以後 while 皇后 stays 皇后, then Taiwanese
+/// wording and the 台/臺 rules (台北, 電視台, but 臺灣大學).
 ///
 /// Only text that is plainly Simplified is converted: text with at least one character that
 /// Traditional Chinese doesn't have, told by Big5 (code page 950), the Traditional character
-/// set. Text already in Traditional characters is left exactly as it is, since the transform
-/// would also rewrite characters both scripts share (周杰倫 would become 周傑倫). Only Han
-/// characters change: English, numbers, IDs and URLs pass through untouched. Text with kana
-/// is Japanese and is left alone, since Japanese kanji are not Simplified Chinese.
+/// set. Text already in Traditional characters is left exactly as it is. Only Han characters
+/// change: English, numbers, IDs and URLs pass through untouched. Text with kana is Japanese
+/// and is left alone, since Japanese kanji are not Simplified Chinese.
 public enum ChineseScript {
     /// `text` in Traditional characters, or `text` itself when it isn't Simplified Chinese.
     public static func traditional(_ text: String) -> String {
@@ -23,7 +23,14 @@ public enum ChineseScript {
     /// `text` in Simplified characters: how most lyrics services index Chinese songs.
     public static func simplified(_ text: String) -> String {
         guard hasHan(text), !hasKana(text) else { return text }
-        return transform(text, ids: ["Hant-Hans", "Traditional-Simplified"])
+        let key = "s|" + text as NSString
+        if let hit = cache.object(forKey: key) { return hit as String }
+        var converted = text
+        #if canImport(Darwin)
+        converted = text.applyingTransform(StringTransform("Hant-Hans"), reverse: false) ?? text
+        #endif
+        cache.setObject(converted as NSString, forKey: key)
+        return converted
     }
 
     /// Lyrics in Traditional characters, judged as a whole song: one line of kanji alone
@@ -41,40 +48,56 @@ public enum ChineseScript {
             return .synced(lines.map { line in
                 var line = line
                 line.text = convert(line.text)
-                line.words = line.words.map { word in
-                    var word = word
-                    word.text = convert(word.text)
-                    return word
-                }
-                line.background = line.background.map { word in
-                    var word = word
-                    word.text = convert(word.text)
-                    return word
-                }
+                line.words = convert(line.words)
+                line.background = convert(line.background)
                 return line
             })
         }
     }
 
-    /// Characters both scripts use that the transform would rewrite, wrongly as often as not
-    /// in names and song titles: 周杰倫, 台北, 才, 見面. They stay as they are.
-    private static let kept: Set<Character> = ["杰", "台", "才", "面"]
-
-    /// Text judged Simplified, converted around the characters that are kept.
-    private static func convert(_ text: String) -> String {
-        guard hasHan(text) else { return text }
-        var out = ""
-        var run = ""
-        for character in text {
-            if kept.contains(character) {
-                out += transform(run, ids: ["Hans-Hant", "Simplified-Traditional"])
-                run = ""
-                out.append(character)
-            } else {
-                run.append(character)
+    /// A line's words converted together, so a word split over syllables (头 发) is still
+    /// read as one (頭髮). When the conversion changes the length, word by word instead.
+    private static func convert(_ words: [LyricWord]) -> [LyricWord] {
+        guard !words.isEmpty else { return words }
+        let joined = words.map(\.text).joined()
+        let converted = Array(convert(joined).unicodeScalars)
+        guard converted.count == joined.unicodeScalars.count else {
+            return words.map { word in
+                var word = word
+                word.text = convert(word.text)
+                return word
             }
         }
-        return out + transform(run, ids: ["Hans-Hant", "Simplified-Traditional"])
+        var index = 0
+        return words.map { word in
+            var word = word
+            let count = word.text.unicodeScalars.count
+            var text = String.UnicodeScalarView()
+            text.append(contentsOf: converted[index..<index + count])
+            word.text = String(text)
+            index += count
+            return word
+        }
+    }
+
+    /// Text judged Simplified, in Taiwan Traditional.
+    private static func convert(_ text: String) -> String {
+        guard hasHan(text) else { return text }
+        let key = "t|" + text as NSString
+        if let hit = cache.object(forKey: key) { return hit as String }
+        let converted = Tables.taiwan.convert(Tables.traditional.convert(text))
+        cache.setObject(converted as NSString, forKey: key)
+        return converted
+    }
+
+    /// Built on first use, off whichever thread asks first; read-only after that.
+    private enum Tables {
+        /// Simplified to Traditional. 杰 is a character of its own in Traditional too, the one
+        /// most names use (周杰倫, 張杰): it stays, though words like 杰出 still become 傑出.
+        static let traditional = PhraseTable([OpenCCData.stCharacters, OpenCCData.stPhrases, OpenCCData.cnQuality, "杰\t杰"])
+        /// Traditional to Taiwan's characters and wording.
+        static let taiwan = PhraseTable([OpenCCData.twVariants, OpenCCData.twPhrasesCustom, OpenCCData.tw2QualityPhrases,
+                                         OpenCCData.tw2Tai, OpenCCData.tw2Quality])
     }
 
     /// Pages repeat the same titles and artists, and every string a parser reads comes
@@ -84,21 +107,6 @@ public enum ChineseScript {
         cache.countLimit = 4000
         return cache
     }()
-
-    private static func transform(_ text: String, ids: [String]) -> String {
-        guard hasHan(text) else { return text }
-        #if canImport(Darwin)
-        let key = (ids[0] + "|" + text) as NSString
-        if let hit = cache.object(forKey: key) { return hit as String }
-        for id in ids {
-            if let converted = text.applyingTransform(StringTransform(id), reverse: false) {
-                cache.setObject(converted as NSString, forKey: key)
-                return converted
-            }
-        }
-        #endif
-        return text
-    }
 
     #if canImport(Darwin)
     /// Big5 as Windows has it (code page 950): the Traditional character set.
@@ -139,5 +147,57 @@ public enum ChineseScript {
             default: false
             }
         }
+    }
+}
+
+/// One OpenCC conversion step: its dictionaries merged into one table, later ones winning,
+/// applied by longest match from the left, as OpenCC does.
+struct PhraseTable: Sendable {
+    private let entries: [String: String]
+    private let longest: Int
+
+    /// Dictionaries of `source<tab>target` lines (a space also separates).
+    init(_ dictionaries: [String]) {
+        var entries: [String: String] = [:]
+        var longest = 1
+        for dictionary in dictionaries {
+            for line in dictionary.split(whereSeparator: \.isNewline) {
+                let entry = line.trimmingCharacters(in: .whitespaces)
+                guard let separator = entry.firstIndex(of: "\t") ?? entry.firstIndex(of: " ") else { continue }
+                let source = String(entry[..<separator])
+                let target = String(entry[entry.index(after: separator)...])
+                guard !source.isEmpty else { continue }
+                entries[source] = target
+                longest = max(longest, source.unicodeScalars.count)
+            }
+        }
+        self.entries = entries
+        self.longest = longest
+    }
+
+    func convert(_ text: String) -> String {
+        let scalars = Array(text.unicodeScalars)
+        var out = String.UnicodeScalarView()
+        var index = 0
+        while index < scalars.count {
+            var matched = false
+            var length = min(longest, scalars.count - index)
+            while length > 0 {
+                var candidate = String.UnicodeScalarView()
+                candidate.append(contentsOf: scalars[index..<index + length])
+                if let target = entries[String(candidate)] {
+                    out.append(contentsOf: target.unicodeScalars)
+                    index += length
+                    matched = true
+                    break
+                }
+                length -= 1
+            }
+            if !matched {
+                out.append(scalars[index])
+                index += 1
+            }
+        }
+        return String(out)
     }
 }
