@@ -12,9 +12,10 @@ concurrency:
 
 jobs:
   build:
-    # Xcode 27 (preview image): the iOS 27 SDK has the audio schemas the new Siri uses
-    # (Koda/Intents/SiriSchemas.swift). Without it that file is left out and the app still builds.
-    runs-on: xcode-27
+    # Upstream builds on its own Xcode 27 runner, which a fork can't use. The standard
+    # macOS 26 image has the iOS 26 SDK: without the iOS 27 SDK, the new Siri's audio schemas
+    # (Koda/Intents/SiriSchemas.swift) are left out and the app still builds.
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7

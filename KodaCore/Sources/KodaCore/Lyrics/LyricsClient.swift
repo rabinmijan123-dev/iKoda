@@ -44,7 +44,17 @@ public struct LyricsClient: Sendable {
         if let cached = await Self.cache[key] { return cached }
         let query = Query(title: song.title, artist: song.artists.first?.name ?? song.artistLine,
                           album: song.album?.title, duration: song.duration)
-        let found = await best(query, sources: sources)
+        var found = await best(query, sources: sources)
+        // Titles are shown in Traditional characters, but most services index Chinese songs
+        // in Simplified: ask again in Simplified when the first spelling found nothing.
+        if found == nil, !Task.isCancelled {
+            let simplified = Query(title: ChineseScript.simplified(query.title), artist: ChineseScript.simplified(query.artist),
+                                   album: query.album.map(ChineseScript.simplified), duration: query.duration)
+            if simplified.title != query.title || simplified.artist != query.artist {
+                found = await best(simplified, sources: sources)
+            }
+        }
+        found = found.map { ChineseScript.traditional($0) }
         if let found { await Self.cache.store(found, for: key) }
         return found
     }
@@ -101,7 +111,7 @@ public struct LyricsClient: Sendable {
         if let album = query.album, !album.isEmpty { parameters["album"] = album }
         if let duration = query.duration, duration > 0 { parameters["duration"] = String(Int(duration.rounded())) }
         if let found = await race(Self.youLyPlusMirrors.map { $0 + "v2/lyrics/get" }, parameters, decode: { data in
-            guard let json = try? JSON(data: data), let lines = Lyrics.parseYouLyPlus(json) else { return nil }
+            guard let json = try? JSON(verbatimData: data), let lines = Lyrics.parseYouLyPlus(json) else { return nil }
             return .synced(lines)
         }) {
             return found
@@ -146,7 +156,7 @@ public struct LyricsClient: Sendable {
     static func decodeWrapped(_ data: Data) -> Lyrics? {
         guard let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
         if body.hasPrefix("<") { return Lyrics.parseAny(body) }
-        guard let json = try? JSON(data: data) else { return nil }
+        guard let json = try? JSON(verbatimData: data) else { return nil }
         for key in ["ttml", "lyrics", "lrc", "content", "text"] {
             if let text = json[key].nonEmpty, let lyrics = Lyrics.parseAny(text) { return lyrics }
         }
@@ -159,12 +169,12 @@ public struct LyricsClient: Sendable {
         var exact = ["artist_name": query.artist, "track_name": query.title]
         if let album = query.album { exact["album_name"] = album }
         if let duration = query.duration { exact["duration"] = String(Int(duration.rounded())) }
-        if let data = await fetch("https://lrclib.net/api/get", exact), let json = try? JSON(data: data), json.isObject,
+        if let data = await fetch("https://lrclib.net/api/get", exact), let json = try? JSON(verbatimData: data), json.isObject,
            let found = Self.lrclibLyrics(from: json) {
             return found
         }
         guard let data = await fetch("https://lrclib.net/api/search", ["artist_name": query.artist, "track_name": query.title]),
-              let json = try? JSON(data: data) else { return nil }
+              let json = try? JSON(verbatimData: data) else { return nil }
         // A different cut of the song (live, extended) is timed for a different recording.
         let candidates = json.array.filter { item in
             guard let duration = query.duration, let other = item["duration"].double else { return true }

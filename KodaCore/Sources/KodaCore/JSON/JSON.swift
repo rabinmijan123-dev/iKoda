@@ -5,33 +5,52 @@ import Foundation
 /// InnerTube nests the same renderer at different depths across response
 /// variants, so parsers walk the tree by key rather than decode fixed
 /// `Codable` models. Every accessor is total: a missing key reads as `.null`.
+///
+/// Strings read in Traditional Chinese characters (see `ChineseScript`), so titles, artists
+/// and albums show that way wherever they are parsed. Only Han characters change, so IDs,
+/// tokens and the English labels parsers compare against read as they came. A tree made
+/// `verbatim` reads its strings untouched: lyrics, which are converted a whole song at once.
 public struct JSON: @unchecked Sendable {
     let raw: Any?
+    let verbatim: Bool
 
-    public init(_ raw: Any?) { self.raw = raw }
+    public init(_ raw: Any?) { self.init(raw, verbatim: false) }
+
+    init(_ raw: Any?, verbatim: Bool) {
+        self.raw = raw
+        self.verbatim = verbatim
+    }
 
     public init(data: Data) throws {
-        raw = try JSONSerialization.jsonObject(with: data)
+        self.init(try JSONSerialization.jsonObject(with: data), verbatim: false)
+    }
+
+    /// A tree whose strings read exactly as they came, with no script conversion.
+    init(verbatimData data: Data) throws {
+        self.init(try JSONSerialization.jsonObject(with: data), verbatim: true)
     }
 
     public static let null = JSON(nil)
 
     public subscript(key: String) -> JSON {
-        JSON((raw as? [String: Any])?[key])
+        JSON((raw as? [String: Any])?[key], verbatim: verbatim)
     }
 
     public subscript(index: Int) -> JSON {
         guard let array = raw as? [Any], array.indices.contains(index) else { return .null }
-        return JSON(array[index])
+        return JSON(array[index], verbatim: verbatim)
     }
 
     public var exists: Bool { raw != nil && !(raw is NSNull) }
     public var isObject: Bool { raw is [String: Any] }
-    public var string: String? { raw as? String }
+    public var string: String? {
+        guard let s = raw as? String else { return nil }
+        return verbatim ? s : ChineseScript.traditional(s)
+    }
     public var int: Int? { (raw as? NSNumber)?.intValue ?? (raw as? String).flatMap { Int($0) } }
     public var double: Double? { (raw as? NSNumber)?.doubleValue ?? (raw as? String).flatMap { Double($0) } }
     public var bool: Bool? { (raw as? NSNumber)?.boolValue }
-    public var array: [JSON] { (raw as? [Any])?.map(JSON.init) ?? [] }
+    public var array: [JSON] { (raw as? [Any])?.map { JSON($0, verbatim: verbatim) } ?? [] }
     public var keys: [String] { (raw as? [String: Any]).map { Array($0.keys) } ?? [] }
 
     /// A non-empty string, or nil.
@@ -60,14 +79,14 @@ public struct JSON: @unchecked Sendable {
     public func strings(_ key: String) -> [String] {
         var out: [String] = []
         collectStrings(raw, key, &out)
-        return out
+        return verbatim ? out : out.map { ChineseScript.traditional($0) }
     }
 
     private func collect(_ node: Any?, _ key: String, _ out: inout [JSON]) {
         if let dict = node as? [String: Any] {
             // Dictionary order is not document order; sort keys so results are deterministic.
             for k in dict.keys.sorted() {
-                if k == key, dict[k] is [String: Any] { out.append(JSON(dict[k])) } else { collect(dict[k], key, &out) }
+                if k == key, dict[k] is [String: Any] { out.append(JSON(dict[k], verbatim: verbatim)) } else { collect(dict[k], key, &out) }
             }
         } else if let array = node as? [Any] {
             for element in array { collect(element, key, &out) }
